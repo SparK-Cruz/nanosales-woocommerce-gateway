@@ -1,0 +1,15 @@
+{
+    "name": "spark-cruz/nanosales-woocommerce-gateway",
+    "description": "Nano gateway for woocommerce",
+    "type": "project",
+    "license": "CC0-1.0",
+    "minimum-stability": "dev",
+    "autoload": {
+        "psr-4": {
+            "NanoSales\\WooCommerce\\": "nanosales-woocommerce-gateway/"
+        }
+    },
+    "config": {
+        "vendor-dir": "nanosales-woocommerce-gateway/vendor"
+    }
+}
