@@ -35,6 +35,8 @@ final class Nano extends \WC_Payment_Gateway {
 		\add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'processAdminOptions']);
 		\add_action('woocommerce_thankyou_' . $this->id, [$this, 'showQrCode']);
 		\add_action('woocommerce_api_' . $this->id, [$this, 'webhook']);
+		\add_action('admin_head', [$this, 'getOrderSettlementButtonCss']);
+		\add_filter('woocommerce_admin_order_actions', [$this, 'addOrderSettlementButton']);
 	}
 
 	/**
@@ -52,9 +54,9 @@ final class Nano extends \WC_Payment_Gateway {
 				'description' => 'Location of your nanosales server',
 			],
 			'auto_settlement' => [
-				'type'    => 'checkbox',
-				'title'   => \__('Enable Auto-Settlement', 'nanosales-woocommerce-gateway'),
-				'label'   => \__('Settle the payment immediately', 'nanosales-woocommerce-gateway'),
+				'type' => 'checkbox',
+				'title' => \__('Enable Auto-Settlement', 'nanosales-woocommerce-gateway'),
+				'label' => \__('Settle the payment immediately', 'nanosales-woocommerce-gateway'),
 				'description' => \__('. Otherwise you will need to capture the payment going to: WooCommerce -> Orders.', 'nanosales-woocommerce-gateway'),
 				'desc_tip' => true,
 			],
@@ -112,9 +114,21 @@ final class Nano extends \WC_Payment_Gateway {
 	 * @param int $order_id Order ID.
 	 * @return array
 	 */
-	public function process_payment($order_id) {
-		$order = \wc_get_order($order_id);
-		$callback = \site_url('wc-api/' . $this->id . '?order_id=' . $order_id);
+	public function process_payment($orderId) {
+		$order = \wc_get_order($orderId);
+
+		$success = [
+            'result'   => 'success',
+            'redirect' => $this->get_return_url($order),
+		];
+
+		if ($order->get_total() == 0) {
+			$order->payment_complete('{}');
+			\WC()->cart->empty_cart();
+			return $success;
+		}
+
+		$callback = \site_url('wc-api/' . $this->id . '?order_id=' . $orderId);
 		$amount = ($order->get_total() * $this->getConfigOrDefault('nano_price', 7)) . 'e+30';
 
 		$backend = $this->getBackendUrl();
@@ -125,21 +139,27 @@ final class Nano extends \WC_Payment_Gateway {
 		])['body']);
 
 		if ($response->paid) {
-			$order->payment_complete();
+			$order->update_status('on-hold');
+			if (!$this->getConfigOrDefault('auto_settlement')) {
+				return [];
+			}
+
+			$this->settle($orderId);
 			return [];
 		}
 
 		$order->set_transaction_id(json_encode($response));
+		\WC()->cart->empty_cart();
 
-        return [
-            'result'   => 'success',
-            'redirect' => $this->get_return_url($order),
-		];
+        return $success;
 	}
 
 	public function webhook() {
 		$order = \wc_get_order($_GET['order_id']);
 		$info = json_decode($order->get_transaction_id());
+		if (!isset($info->address))
+			return;
+
 		$backend = $this->getBackendUrl().'/'.$info->address;
 
 		$response = json_decode(\wp_remote_get($backend, [
@@ -149,15 +169,15 @@ final class Nano extends \WC_Payment_Gateway {
 		if (!$response->paid)
 			return;
 
-		$order->payment_complete('{}');
+		$order->update_status('on-hold');
 
-		if (!$this->getConfigOrDefault('auto_settlement'))
+		if (!$this->getConfigOrDefault('auto_settlement')) {
 			return;
+		}
 
 		$this->settle($_GET['order_id']);
 	}
 
-	// TODO add custom button in order list to call this
 	public function settle($orderId) {
 		$order = \wc_get_order($orderId);
 		$info = json_decode($order->get_transaction_id());
@@ -168,6 +188,37 @@ final class Nano extends \WC_Payment_Gateway {
 			'method' => 'DELETE',
 			'timeout' => 300
 		]);
+
+		$order->payment_complete('{}');
+	}
+
+	/**
+	 *
+	 * @param array    $actions
+	 * @param WC_Order $order
+	 *
+	 * @return array
+	 */
+	public function addOrderSettlementButton($actions, $order) {
+		if ($order->get_status() !== 'on-hold'
+			|| $order->get_payment_method() !== $this->id
+			|| !\current_user_can( 'administrator' ) ) {
+			return $actions;
+		}
+
+		$callback = \site_url('wc-api/' . $this->id . '?order_id=' . $order->get_id());
+
+		$actions['nanosales_settle'] = array(
+			'url'    => $callback,
+			'name'   => \__( 'Settle payment to main wallet', 'nanosales-woocommerce-gateway' ),
+			'action' => 'view settle',
+		);
+
+		return $actions;
+	}
+
+	public function getOrderSettlementButtonCss() {
+		echo '<style>.view.settle::after { font-family: Dashicons; content: "\f18e" !important; }</style>';
 	}
 
 	/**
