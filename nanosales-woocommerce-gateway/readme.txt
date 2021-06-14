@@ -3,7 +3,7 @@ Contributors: spark
 Tags: crypto, cryptocurrency, nano, woocommerce, payment, gateway, alternative, currency, nanosales
 Requires at least: 4.0
 Tested up to: 10.8
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: CC0-1.0
 License URI: https://creativecommons.org/publicdomain/zero/1.0/
 
